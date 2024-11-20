@@ -1,5 +1,6 @@
+import logging
 import typing
-from typing import Literal
+from typing import Callable, Literal
 
 from PyQt6.QtCore import (
     QAbstractItemModel,
@@ -10,11 +11,15 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import (
-    QStyleOptionButton,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
+    QApplication,
     QStyle,
+    QStyledItemDelegate,
+    QStyleOptionButton,
+    QStyleOptionViewItem,
+    QWidget,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # 自定义数据模型类，继承自 QAbstractTableModel
@@ -56,9 +61,9 @@ class MyTableModel(QAbstractTableModel):
         return len(self._data[0])
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
-        if index.column() == 1:
+        if index.column() == 3:
             # 第二列包含可编辑的复选框
-            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEnabled
+            return Qt.ItemFlag.ItemIsEnabled
         # 其他列是不可编辑的选择项
         return Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 
@@ -77,33 +82,56 @@ class MyTableModel(QAbstractTableModel):
 
 
 class ButtonDelegate(QStyledItemDelegate):
+    def __init__(
+        self,
+        handleButtonClicked: Callable[[QModelIndex], None],
+        parent: QWidget | None = None,
+    ):
+        self._parent = parent
+        self.selected_index = None
+        self._handleButtonClicked = handleButtonClicked
+        super(ButtonDelegate, self).__init__(parent)
+
+    def createEditor(
+        self,
+        parent: typing.Optional[QWidget],
+        option: QStyleOptionViewItem,
+        index: QModelIndex,
+    ):
+        return super().createEditor(parent, option, index)
+
+    def setEditorData(self, editor: typing.Optional[QWidget], index: QModelIndex):
+        if index.column() == 3:
+            # 这里不需要设置数据，因为按钮没有数据
+            pass
+        else:
+            super().setEditorData(editor, index)
+
+    def setModelData(
+        self,
+        editor: typing.Optional[QWidget],
+        model: typing.Optional[QAbstractItemModel],
+        index: QModelIndex,
+    ):
+        if index.column() == 3:
+            # 这里不需要将数据保存到模型中，因为按钮没有数据
+            pass
+        else:
+            super().setModelData(editor, model, index)
+
     def paint(
         self,
         painter: typing.Optional[QPainter],
         option: QStyleOptionViewItem,
         index: QModelIndex,
     ):
-        if not index.isValid():
-            return super().paint(painter, option, index)
-
-        if index.column() == 3:  # 假设按钮列是第二列
-            # 创建一个按钮选项
-            button_option = QStyleOptionButton()
-            button_option.rect = option.rect
-            button_option.text = "Click"
-            button_option.state = (
-                QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Raised
-            )
-
-            # 使用样式绘制按钮
-            style = option.widget.style()
-            if style:
-                style.drawControl(
-                    QStyle.ControlElement.CE_PushButton,
-                    button_option,
-                    painter,
-                    option.widget,
-                )
+        if index.column() == 3:
+            opt = QStyleOptionButton()
+            opt.rect = option.rect
+            opt.text = "→"
+            opt.state |= QStyle.StateFlag.State_Enabled
+            if style := QApplication.style():
+                style.drawControl(QStyle.ControlElement.CE_PushButton, opt, painter)
         else:
             super().paint(painter, option, index)
 
@@ -114,54 +142,10 @@ class ButtonDelegate(QStyledItemDelegate):
         option: QStyleOptionViewItem,
         index: QModelIndex,
     ):
-        if not index.isValid():
-            return False
         if (
-            event
-            and index.column() == 3
-            and event.type() == event.Type.MouseButtonRelease
+            index.column() == 3
+            and event
+            and event.type() == QEvent.Type.MouseButtonRelease
         ):
-            print(f"Button clicked for row {index.row()}")
-            return True
-
+            self._handleButtonClicked(index)
         return super().editorEvent(event, model, option, index)
-
-
-# class ButtonDelegate(QStyledItemDelegate):
-#     def __init__(self, parent: QWidget | None = None):
-#         super().__init__(parent)
-
-#     def createEditor(
-#         self,
-#         parent: typing.Optional[QWidget],
-#         option: QStyleOptionViewItem,
-#         index: QModelIndex,
-#     ) -> QWidget:
-#         button = QPushButton("Click Me", parent)
-#         button.clicked.connect(lambda: self.on_click(index))
-#         return button
-
-#     def setEditorData(
-#         self, editor: typing.Optional[QWidget], index: QModelIndex
-#     ) -> None:
-#         pass
-
-#     def setModelData(
-#         self,
-#         editor: typing.Optional[QWidget],
-#         model: typing.Optional[QAbstractItemModel],
-#         index: QModelIndex,
-#     ) -> None:
-#         pass
-
-#     def updateEditorGeometry(
-#         self,
-#         editor: typing.Optional[QWidget],
-#         option: QStyleOptionViewItem,
-#         index: QModelIndex,
-#     ) -> None:
-#         if editor:
-#             editor.setGeometry(option.rect)
-
-#     def on_click(self, index: QModelIndex) -> None:
-#         print(f"Button clicked at row {index.row()}, column {index.column()}")

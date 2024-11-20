@@ -7,8 +7,9 @@ from xml.etree.ElementTree import Element
 
 import mobase
 import vdf  # type: ignore
+from PyQt6.QtCore import QModelIndex, Qt
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QMainWindow, QTableView, QWidget, QPushButton
+from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMainWindow, QTableView, QWidget
 
 from .steam_utils import find_games, find_steam_path, parse_library_info
 from .table_copy import ButtonDelegate, MyTableModel
@@ -91,7 +92,7 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
         super(DarkestDungeonModCopy, self).__init__()
         self._organizer: mobase.IOrganizer
         self.__parentWidget: QWidget
-        self.raw_model = {}
+        self.model: MyTableModel
         self.data: list[list[str | bool]] = []
         pass
 
@@ -108,13 +109,18 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
     def display(self) -> None:
         windows = QMainWindow(self.__parentWidget)
         windows.setWindowTitle("Darkest Dungeon Mod Copy")
-        windows.setGeometry(100, 100, 600, 400)  # 设置窗口位置和大小
+        windows.setGeometry(100, 100, 1720, 900)  # 设置窗口位置和大小
         self.table_view = QTableView()
+        self.init_data()
+        self.table_view.setColumnWidth(0, 550)
+        self.table_view.setColumnWidth(1, 200)
+        self.table_view.setColumnWidth(2, 10)
+        self.table_view.setColumnWidth(3, 10)
+        self.table_view.setColumnWidth(4, 200)
+        self.table_view.setColumnWidth(5, 550)
         self.table_view.setShowGrid(False)
         windows.setCentralWidget(self.table_view)
-        self.init_data()
-        verticalHeader = self.table_view.verticalHeader()
-        if verticalHeader:
+        if verticalHeader := self.table_view.verticalHeader():
             verticalHeader.setVisible(False)
         windows.show()
         pass
@@ -183,7 +189,7 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
                             ),
                             xml_data.mod_title,
                             PublishedFileId in mo_workshop_PublishedFileId,
-                            QPushButton("Copy", self.table_view),
+                            "",
                             ""
                             if PublishedFileId not in mo_workshop_PublishedFileId
                             else mo_workshop_PublishedFileId[PublishedFileId].name(),
@@ -196,15 +202,31 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
                     )
         return data
 
+    def handleButtonClicked(self, index: QModelIndex):
+        input = QInputDialog(self.__parentWidget, Qt.WindowType.Dialog)
+        text, ok = QInputDialog.getText(
+            self.__parentWidget,
+            "QInputDialog.getText()",
+            "User name:",
+            QLineEdit.EchoMode.Normal,
+            "",
+        )
+        input.show()
+        if ok:
+            logger.info(text)
+
     def init_data(self):
         data: list[list[str | bool]] = []
         data = self.get_workshop_items()
-        model = MyTableModel(data)
-        button_delegate = ButtonDelegate(self.table_view)  # 创建按钮委托实例
+        self.data = data
+        self.model = MyTableModel(self.data)
+        button_delegate = ButtonDelegate(
+            self.handleButtonClicked, self.table_view
+        )  # 创建按钮委托实例
         self.table_view.setItemDelegateForColumn(
             3, button_delegate
         )  # 在第一列使用按钮委托
-        self.table_view.setModel(model)
+        self.table_view.setModel(self.model)
 
     def displayName(self) -> str:
         return "暗黑地牢mod复制插件"
