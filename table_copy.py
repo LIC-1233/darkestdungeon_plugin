@@ -24,13 +24,13 @@ logger = logging.getLogger(__name__)
 
 # 自定义数据模型类，继承自 QAbstractTableModel
 class MyTableModel(QAbstractTableModel):
-    def __init__(self, data: list[list[bool | str]]):
+    def __init__(self, data: list[list[str]]):
         super().__init__()
         self._data = data  # 存储表格数据
 
     def data(
         self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole
-    ) -> Literal[Qt.CheckState.Checked, Qt.CheckState.Unchecked] | bool | str | None:
+    ) -> Literal[Qt.CheckState.Checked, Qt.CheckState.Unchecked] | str | None:
         if role == Qt.ItemDataRole.DisplayRole:
             # 返回显示角色的数据
             return self._data[index.row()][index.column()]
@@ -43,14 +43,17 @@ class MyTableModel(QAbstractTableModel):
         return None
 
     def setData(
-        self, index: QModelIndex, value: int, role: int = Qt.ItemDataRole.CheckStateRole
+        self, index: QModelIndex, value: str, role: int = Qt.ItemDataRole.CheckStateRole
     ) -> bool:
         if role == Qt.ItemDataRole.CheckStateRole and index.column() == 2:
             # 设置复选框的状态
-            self._data[index.row()][index.column()] = value == Qt.CheckState.Checked
+            self._data[index.row()][index.column()] = (
+                "1" if value == Qt.CheckState.Checked else ""
+            )
             self.dataChanged.emit(index, index, [role])  # 发出数据改变信号
             return True
-        return False
+        self.dataChanged.emit(index, index, [role])
+        return True
 
     def rowCount(self, parent: QModelIndex) -> int:  # type: ignore
         # 返回行数
@@ -71,9 +74,15 @@ class MyTableModel(QAbstractTableModel):
         # 表头仅显示文本信息
         if role == Qt.ItemDataRole.DisplayRole:
             if orientation == Qt.Orientation.Horizontal:
-                return ["mod 路径", "mod 名", "已存在", "-》", "mo2 名", "mo2 路径"][
-                    section
-                ]
+                return [
+                    "mod 路径",
+                    "mod 名",
+                    "已存在",
+                    "-》",
+                    "mo2 名",
+                    "mo2 路径",
+                    "创意工坊模组",
+                ][section]
             elif orientation == Qt.Orientation.Vertical:
                 return str(section + 1)  # 假设行号从1开始
 

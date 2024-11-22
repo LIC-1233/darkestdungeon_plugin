@@ -1,5 +1,8 @@
 import logging
+import os
+import random
 import re
+import shutil
 from pathlib import Path
 from typing import Sequence
 from xml.etree import ElementTree as ET
@@ -9,7 +12,16 @@ import mobase
 import vdf  # type: ignore
 from PyQt6.QtCore import QModelIndex, Qt
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMainWindow, QTableView, QWidget
+from PyQt6.QtWidgets import (
+    QHeaderView,
+    QInputDialog,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QProgressDialog,
+    QTableView,
+    QWidget,
+)
 
 from .steam_utils import find_games, find_steam_path, parse_library_info
 from .table_copy import ButtonDelegate, MyTableModel
@@ -93,7 +105,8 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
         self._organizer: mobase.IOrganizer
         self.__parentWidget: QWidget
         self.model: MyTableModel
-        self.data: list[list[str | bool]] = []
+        self.data: list[list[str]] = []
+        self.workshop_items: dict[str, dict[str, str]] = {}
         pass
 
     def init(self, organizer: mobase.IOrganizer):
@@ -112,12 +125,19 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
         windows.setGeometry(100, 100, 1720, 900)  # 设置窗口位置和大小
         self.table_view = QTableView()
         self.init_data()
-        self.table_view.setColumnWidth(0, 550)
+        self.table_view.setColumnWidth(0, 600)
         self.table_view.setColumnWidth(1, 200)
         self.table_view.setColumnWidth(2, 10)
         self.table_view.setColumnWidth(3, 10)
         self.table_view.setColumnWidth(4, 200)
-        self.table_view.setColumnWidth(5, 550)
+        self.table_view.setColumnWidth(5, 600)
+        self.table_view.hideColumn(6)
+        self.table_view.hideColumn(2)
+        if horizontalHeader := self.table_view.horizontalHeader():
+            horizontalHeader.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+            horizontalHeader.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        if verticalHeader := self.table_view.verticalHeader():
+            verticalHeader.setDefaultSectionSize(10)
         self.table_view.setShowGrid(False)
         windows.setCentralWidget(self.table_view)
         if verticalHeader := self.table_view.verticalHeader():
@@ -159,6 +179,8 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
                 logger.debug(
                     f"found {len(workshop_path_workshop_items[workshop_path])} mod-records in {workshop_path}"
                 )
+                for i in workshop_path_workshop_items.values():
+                    self.workshop_items.update(i)
             else:
                 logger.debug(f"darkest_dungeon acf file not exist in {workshop_path}")
         mod_list = self._organizer.modList()
@@ -166,57 +188,241 @@ class DarkestDungeonModCopy(mobase.IPluginTool):
             str(i.stem.strip("w")): mod_list.getMod(str(i.parent.parent.name))
             for i in Path(self._organizer.modsPath()).glob("*/project_file/w*.manifest")
         }
-        data: list[list[str | bool]] = []
+        data: list[list[str]] = []
         for game_workshop_path, workshop_items in workshop_path_workshop_items.items():
             for PublishedFileId in workshop_items.keys():
-                if PublishedFileId in mo_workshop_PublishedFileId:
-                    xml_data = dd_xml_data.mod_xml_parser(
-                        game_workshop_path
-                        / "content"
-                        / "262060"
-                        / PublishedFileId
-                        / "project.xml"
-                    )
-                    data.append(
-                        [
-                            str(
-                                (
-                                    game_workshop_path
-                                    / "content"
-                                    / "262060"
-                                    / PublishedFileId
-                                ).absolute()
-                            ),
-                            xml_data.mod_title,
-                            PublishedFileId in mo_workshop_PublishedFileId,
-                            "",
-                            ""
-                            if PublishedFileId not in mo_workshop_PublishedFileId
-                            else mo_workshop_PublishedFileId[PublishedFileId].name(),
-                            ""
-                            if PublishedFileId not in mo_workshop_PublishedFileId
-                            else mo_workshop_PublishedFileId[
-                                PublishedFileId
-                            ].absolutePath(),
-                        ]
-                    )
+                xml_data = dd_xml_data.mod_xml_parser(
+                    game_workshop_path
+                    / "content"
+                    / "262060"
+                    / PublishedFileId
+                    / "project.xml"
+                )
+                data.append(
+                    [
+                        str(
+                            (
+                                game_workshop_path
+                                / "content"
+                                / "262060"
+                                / PublishedFileId
+                            ).absolute()
+                        ),
+                        xml_data.mod_title,
+                        " 1" if PublishedFileId in mo_workshop_PublishedFileId else "",
+                        "",
+                        "尚未复制"
+                        if PublishedFileId not in mo_workshop_PublishedFileId
+                        else mo_workshop_PublishedFileId[PublishedFileId].name(),
+                        "尚未复制"
+                        if PublishedFileId not in mo_workshop_PublishedFileId
+                        else mo_workshop_PublishedFileId[
+                            PublishedFileId
+                        ].absolutePath(),
+                        "1",
+                    ]
+                )
+        data = sorted(data, key=lambda x: x[5], reverse=True)
         return data
 
     def handleButtonClicked(self, index: QModelIndex):
         input = QInputDialog(self.__parentWidget, Qt.WindowType.Dialog)
-        text, ok = QInputDialog.getText(
+        text, ok = input.getText(
             self.__parentWidget,
-            "QInputDialog.getText()",
-            "User name:",
+            "模组安装",
+            "模组名",
             QLineEdit.EchoMode.Normal,
-            "",
+            self.data[index.row()][1],
         )
-        input.show()
+        # input.show()
         if ok:
-            logger.info(text)
+            text: str = text.strip()
+            if self.is_valid_filename(text):
+                if text not in self._organizer.modList().allModsByProfilePriority():
+                    self.scopy_mod(
+                        Path(self.data[index.row()][0]),
+                        Path(self._organizer.modsPath()) / text,
+                        self.data[index.row()][6] == "1",
+                    )
+                    self.model.setData(self.model.index(index.row(), 5), text)  # TODO
+                    self.model.setData(
+                        self.model.index(index.row(), 5),
+                        str(Path(self._organizer.modsPath()) / text),
+                    )  # TODO
+                    # self.model.dataChanged(self.model.index(index.row(), 5),)
+                    input.close()
+                else:
+                    QMessageBox.critical(
+                        self.__parentWidget,
+                        "模组名错误",
+                        "模组已存在",
+                    )
+            else:
+                QMessageBox.critical(
+                    self.__parentWidget,
+                    "模组名错误",
+                    "模组名含有非法字符",
+                )
+
+    def is_valid_filename(self, filename: str):
+        """
+        验证给定的字符串是否是有效的文件名。
+
+        参数:
+        filename (str): 要验证的文件名。
+
+        返回:
+        bool: 如果文件名有效，则返回 True；否则返回 False。
+        """
+
+        # 检查文件名是否为空
+        if not filename:
+            return False
+
+        # 检查文件名是否包含非法字符
+        # Windows: \ / : * ? " < > |
+        # Unix: /
+        illegal_chars = r'[\\/:*?"<>|]'
+        if re.search(illegal_chars, filename):
+            return False
+
+        # 检查文件名是否以空格或点开头
+        if filename.startswith(" ") or filename.startswith("."):
+            return False
+
+        # 检查文件名是否以空格结尾
+        if filename.endswith(" "):
+            return False
+
+        # 检查文件名长度是否超过操作系统限制
+        max_length = 255  # 常见的最大文件名长度限制
+        if len(filename) > max_length:
+            return False
+
+        # 检查文件名是否为保留名称（Windows 特定）
+        reserved_names = [
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+        ]
+        if os.name == "nt":
+            name, _ext = os.path.splitext(filename)
+            if name.upper() in reserved_names:
+                return False
+
+        return True
+
+    def scopy_mod(self, source: Path, dest: Path, is_from_workshop: bool):
+        folders: list[Path] = []
+        files: list[Path] = []
+        for i in source.rglob("*"):
+            if i.is_file():
+                files.append(i)
+            else:
+                folders.append(i)
+        numFiles = len(folders) + len(files)
+        progress = QProgressDialog(
+            "复制文件...",
+            "终止",
+            0,
+            numFiles,
+            self.__parentWidget,
+            Qt.WindowType.Dialog,
+        )
+        dest.mkdir(exist_ok=True, parents=True)
+        for i in range(len(folders)):
+            progress.setLabelText(f"正在复制: {folders[i]}")
+            (dest / folders[i].relative_to(source)).mkdir(exist_ok=True, parents=True)
+            if progress.wasCanceled():
+                break
+            progress.setValue(i + 1)
+        for i in range(len(files)):
+            progress.setLabelText(f"正在复制: {files[i]}")
+            shutil.copy2(files[i], dest / files[i].relative_to(source))
+            if progress.wasCanceled():
+                break
+            progress.setValue(i + len(folders) + 1)
+        if is_from_workshop:
+            PublishedFileId = dd_xml_data.mod_xml_parser(
+                source / "project.xml"
+            ).mod_PublishedFileId
+            mo_mod_folder = dest
+            log_file = mo_mod_folder / "steam_workshop_uploader.log"
+            txt_file = mo_mod_folder / "modfiles.txt"
+            xml_file = mo_mod_folder / "project.xml"
+            preview_file = mo_mod_folder / "preview_icon.png"
+            manifest_file = (
+                mo_mod_folder / "project_file" / f"w{PublishedFileId}.manifest"
+            )
+
+            (mo_mod_folder / "preview_file").mkdir(exist_ok=True)
+            (mo_mod_folder / "project_file").mkdir(exist_ok=True)
+
+            if txt_file.exists():
+                txt_file.unlink()
+            if log_file.exists():
+                log_file.unlink()
+
+            if preview_file.exists():
+                preview_file.rename(
+                    mo_mod_folder / "preview_file" / f"{PublishedFileId}.png"
+                )
+
+            if xml_file.exists():
+                xml_file.rename(
+                    mo_mod_folder / "project_file" / f"{PublishedFileId}.xml"
+                )
+                manifest_file.write_text(
+                    self.workshop_items[PublishedFileId]["manifest"]
+                )
+        else:
+            id = str(random.randint(1, 9999999))
+            (source / f"l{id}.manifest").write_text("", encoding="utf-8")
+            mo_mod_folder = dest
+            preview_file = mo_mod_folder / "preview_icon.png"
+            txt_file = mo_mod_folder / "modfiles.txt"
+            xml_file = mo_mod_folder / "project.xml"
+            log_file = mo_mod_folder / "steam_workshop_uploader.log"
+
+            if log_file.exists():
+                log_file.unlink()
+            if txt_file.exists():
+                txt_file.unlink()
+
+            (mo_mod_folder / "preview_file").mkdir(exist_ok=True)
+            if preview_file.exists():
+                preview_file.rename(mo_mod_folder / "preview_file" / f"{id}.png")
+
+            (mo_mod_folder / "project_file").mkdir(exist_ok=True)
+            if xml_file.exists():
+                xml_file.rename(xml_file.parent / "project_file" / f"{id}.xml")
+                open(
+                    xml_file.parent / "project_file" / f"l{id}.manifest",
+                    "w+",
+                    encoding="utf-8",
+                ).write("")
 
     def init_data(self):
-        data: list[list[str | bool]] = []
+        data: list[list[str]] = []
         data = self.get_workshop_items()
         self.data = data
         self.model = MyTableModel(self.data)
